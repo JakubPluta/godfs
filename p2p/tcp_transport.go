@@ -6,6 +6,16 @@ import (
 	"sync"
 )
 
+// TCPPeer represents the remote node over TCP established connection.
+type TCPPeer struct {
+	// underlying connection of the peer
+	conn net.Conn
+
+	// if we dial a connection, we are outbound. So outboud == true
+	// if we accept a connection, we are inbound. So outbound == false
+	outboud bool
+}
+
 type TCPTransport struct {
 	listenAddr string
 	listener   net.Listener
