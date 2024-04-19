@@ -2,8 +2,8 @@ package p2p
 
 import (
 	"fmt"
+	"io"
 	"net"
-	"sync"
 )
 
 // TCPPeer represents the remote node over TCP established connection.
@@ -23,24 +23,35 @@ func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
 	}
 }
 
+// Close implements the Peer interface.
+func (t *TCPPeer) Close() error {
+	return t.conn.Close()
+}
+
 type TCPTransportOpts struct {
 	ListenAddr    string
 	HandshakeFunc HandshakeFunc
 	Decoder       Decoder
+	OnPeer        func(Peer) error
 }
 
 type TCPTransport struct {
 	TCPTransportOpts
 	listener net.Listener
-
-	mu    sync.RWMutex
-	peers map[net.Addr]Peer
+	rpcchan  chan RPC
 }
 
 func NewTCPTransport(opts TCPTransportOpts) *TCPTransport {
 	return &TCPTransport{
 		TCPTransportOpts: opts,
+		rpcchan:          make(chan RPC),
 	}
+}
+
+// Consume implements the Transport interface, which will return read-only channel.
+// for reading the incoming messages received from other peer in the network.
+func (t *TCPTransport) Consume() <-chan RPC {
+	return t.rpcchan
 }
 
 func (t *TCPTransport) ListenAndAccept() error {
@@ -67,23 +78,40 @@ func (t *TCPTransport) startAcceptLoop() {
 }
 
 func (t *TCPTransport) handleConn(conn net.Conn) {
-	peer := NewTCPPeer(conn, true)
+	var err error
 
-	if err := t.HandshakeFunc(peer); err != nil {
-		// TODO
-		fmt.Printf("TCPTransport: Error during handshake: %v\n", err)
+	defer func() {
+		fmt.Printf("dropping peer connection: %v\n", err)
 		conn.Close()
+
+	}()
+
+	peer := NewTCPPeer(conn, true)
+	if err = t.HandshakeFunc(peer); err != nil {
 		return
 	}
 
-	rpc := &RPC{}
+	if t.OnPeer != nil {
+		if err = t.OnPeer(peer); err != nil {
+			return
+		}
+	}
+
+	rpc := RPC{}
 	for {
-		if err := t.Decoder.Decode(conn, rpc); err != nil {
+		err = t.Decoder.Decode(conn, &rpc)
+		if err == io.EOF {
+			fmt.Printf("TCPTransport: Connection closed: %v\n", err)
+			return
+		}
+
+		if err != nil {
 			fmt.Printf("TCPTransport: Error during decoding: %v\n", err)
 			continue
 
 		}
 		rpc.From = conn.RemoteAddr()
+		t.rpcchan <- rpc
 		fmt.Printf("TCPTransport: Received message: %v\n", rpc)
 	}
 
