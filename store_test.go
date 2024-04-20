@@ -33,6 +33,25 @@ func TestStore(t *testing.T) {
 		t.Errorf("expected %s, got %s", data, b)
 	}
 
+	s.Delete(key)
+
+}
+
+func TestStoreDelete(t *testing.T) {
+	opts := StoreOpts{
+		PathTransformFunc: CASPathTransformFunc,
+	}
+	s := NewStore(opts)
+	key := "mybestpicture"
+	if err := s.writeStream(key, bytes.NewReader([]byte("some jpg data"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Read(key); err == nil {
+		t.Fatal("expected error")
+	}
 }
 
 func TestPathTransformFunc(t *testing.T) {
