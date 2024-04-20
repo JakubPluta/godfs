@@ -1,19 +1,29 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"strings"
 )
 
-type PathTransformFunc func(string) string
+type PathTransformFunc func(string) PathKey
+type PathKey struct {
+	PathName string
+	Filename string
+}
+
+func (p *PathKey) FullPath() string {
+	return fmt.Sprintf("%s/%s", p.PathName, p.Filename)
+}
 
 // Content Addressable Storage Transform Function
 // implements type of CAS (Content Addressable Storage) and it's a type of PathTransformFunc
-func CASPathTransformFunc(key string) string {
+func CASPathTransformFunc(key string) PathKey {
 	// hash the key with sha1
 	hash := sha1.Sum([]byte(key))
 	hashStr := hex.EncodeToString(hash[:])
@@ -24,8 +34,10 @@ func CASPathTransformFunc(key string) string {
 		// 5 byte block
 		paths[i] = hashStr[i*blockSize : (i+1)*blockSize]
 	}
-	return strings.Join(paths, "/")
-
+	return PathKey{
+		PathName: strings.Join(paths, "/"),
+		Filename: hashStr,
+	}
 }
 
 type StoreOpts struct {
@@ -46,15 +58,32 @@ func NewStore(opts StoreOpts) *Store {
 	}
 }
 
+func (s *Store) Read(key string) (io.Reader, error) {
+	f, err := s.readStream(key)
+	if err != nil {
+		return nil, err
+	}
+
+	defer f.Close()
+	buf := new(bytes.Buffer)
+	_, err = io.Copy(buf, f)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
+
+}
+
 func (s *Store) writeStream(key string, r io.Reader) error {
-	pathName := s.PathTransformFunc(key)
-	if err := os.MkdirAll(pathName, os.ModePerm); err != nil {
+	pathKey := s.PathTransformFunc(key)
+	if err := os.MkdirAll(pathKey.PathName, os.ModePerm); err != nil {
 		return err
 	}
-	fileName := "somefilename"
-	pathAndFileName := pathName + "/" + fileName
 
-	f, err := os.Create(pathAndFileName)
+	fullPath := pathKey.FullPath()
+
+	f, err := os.Create(fullPath)
 	if err != nil {
 		return err
 	}
@@ -63,7 +92,12 @@ func (s *Store) writeStream(key string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("written %d bytes to disk: %s\n", n, pathAndFileName)
+	log.Printf("written %d bytes to disk: %s\n", n, fullPath)
 	return nil
 
+}
+
+func (s *Store) readStream(key string) (io.ReadCloser, error) {
+	pathKey := s.PathTransformFunc(key)
+	return os.Open(pathKey.FullPath())
 }
