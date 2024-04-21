@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -99,12 +100,17 @@ func (s *Store) Read(key string) (io.Reader, error) {
 
 func (s *Store) Has(key string) bool {
 	pathKey := s.PathTransformFunc(key)
-	_, err := os.Stat(pathKey.FullPath())
-	// if file does not exist
-	if err == fs.ErrNotExist {
+	fullPathWithRoot := fmt.Sprintf("%s/%s", s.Root, pathKey.FullPath())
+	_, err := os.Stat(fullPathWithRoot)
+	// ignore
+	if errors.Is(err, fs.ErrNotExist) {
 		return false
 	}
 	return true
+}
+
+func (s *Store) Clear() error {
+	return os.RemoveAll(s.Root)
 }
 
 func (s *Store) Delete(key string) error {

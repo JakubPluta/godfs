@@ -8,32 +8,40 @@ import (
 )
 
 func TestStore(t *testing.T) {
-	opts := StoreOpts{
-		PathTransformFunc: CASPathTransformFunc,
-	}
-	s := NewStore(opts)
+	s := newStore()
+	defer teardown(t, s)
+	for i := 0; i < 50; i++ {
 
-	key := "mybestpicture"
-	data := []byte("some jpg data")
+		key := fmt.Sprintf("foobar_%d", i)
+		data := []byte("some jpg data here")
 
-	if err := s.writeStream(key, bytes.NewReader(data)); err != nil {
-		t.Fatal(err)
-	}
+		if err := s.writeStream(key, bytes.NewReader(data)); err != nil {
+			t.Fatal(err)
+		}
+		if ok := s.Has(key); !ok {
+			t.Fatal("expected true")
+		}
 
-	r, err := s.Read(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Printf("written data: %s vs read data: %s\n", data, b)
-	if string(b) != string(data) {
-		t.Errorf("expected %s, got %s", data, b)
-	}
+		r, err := s.Read(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	s.Delete(key)
+		if string(b) != string(data) {
+			t.Errorf("expected %s, got %s", data, b)
+		}
+
+		if err := s.Delete(key); err != nil {
+			t.Fatal(err)
+		}
+		if ok := s.Has(key); ok {
+			t.Fatal("expected to not that key exists")
+		}
+	}
 
 }
 
@@ -59,7 +67,6 @@ func TestPathTransformFunc(t *testing.T) {
 	expectedOriginalKey := "be17b32c2870b1c0c73b59949db6a3be7814dd23"
 	expectedPathName := "be17b/32c28/70b1c/0c73b/59949/db6a3/be781/4dd23"
 	pathKey := CASPathTransformFunc(key)
-	fmt.Println(pathKey)
 	if pathKey.Filename != expectedOriginalKey {
 		t.Errorf("expected %s, got %s", expectedOriginalKey, pathKey.Filename)
 	}
@@ -67,4 +74,18 @@ func TestPathTransformFunc(t *testing.T) {
 		t.Errorf("expected %s, got %s", expectedPathName, pathKey.PathName)
 	}
 
+}
+
+func newStore() *Store {
+	opts := StoreOpts{
+		PathTransformFunc: CASPathTransformFunc,
+		Root:              "tmp",
+	}
+	return NewStore(opts)
+}
+
+func teardown(t *testing.T, s *Store) {
+	if err := s.Clear(); err != nil {
+		t.Fatal(err)
+	}
 }
