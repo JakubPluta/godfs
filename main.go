@@ -42,7 +42,7 @@ func main() {
 	time.Sleep(2 * time.Second)
 	go s2.Start()
 	time.Sleep(2 * time.Second)
-	content := bytes.NewReader([]byte("hello here"))
+	content := bytes.NewReader([]byte("my big data here"))
 	s2.StoreData("hey", content)
 	select {}
 }
