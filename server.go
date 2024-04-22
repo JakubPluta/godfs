@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
+	"io"
 	"log"
 	"sync"
 
@@ -50,6 +53,39 @@ func (f *FileServer) Stop() {
 	close(f.quitchan)
 }
 
+type Payload struct {
+	Key  string
+	Data []byte
+}
+
+func (f *FileServer) broadcast(p *Payload) error {
+	peers := []io.Writer{}
+	for _, peer := range f.peers {
+		peers = append(peers, peer)
+	}
+	mw := io.MultiWriter(peers...)
+	return gob.NewEncoder(mw).Encode(&p)
+}
+
+func (f *FileServer) StoreData(key string, r io.Reader) error {
+
+	var (
+		fileBuffer = new(bytes.Buffer)
+		tee        = io.TeeReader(r, fileBuffer)
+	)
+
+	if err := f.store.Write(key, tee); err != nil {
+		log.Println("failed to write payload: ", err)
+		return err
+	}
+
+	p := &Payload{
+		Key:  key,
+		Data: fileBuffer.Bytes(),
+	}
+	return f.broadcast(p)
+}
+
 func (f *FileServer) loop() {
 	defer func() {
 		log.Println("file server stopped due to user quit action")
@@ -58,7 +94,17 @@ func (f *FileServer) loop() {
 	for {
 		select {
 		case msg := <-f.Transport.Consume():
-			fmt.Println("got message: ", msg)
+			var p Payload
+
+			if err := gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&p); err != nil {
+				log.Println("failed to decode payload: ", err, string(msg.Payload))
+				continue
+			}
+			if err := f.store.Write(p.Key, bytes.NewReader(p.Data)); err != nil {
+				log.Println("failed to write payload: ", err)
+				continue
+			}
+			fmt.Printf("stored %s with %d bytes\n", p.Key, p.Data)
 		case <-f.quitchan:
 			return
 		}

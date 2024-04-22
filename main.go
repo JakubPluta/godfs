@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"log"
+	"time"
 
 	"github.com/JakubPluta/godfs/p2p"
 )
@@ -17,7 +19,7 @@ func makeServer(listenAddr string, nodes ...string) *FileServer {
 	tcpTransport := p2p.NewTCPTransport(tcpTransportOpts)
 
 	fileServerOpts := FileServerOpts{
-		StorageRoot:       listenAddr + "_network",
+		StorageRoot:       listenAddr[1:] + "_network",
 		PathTransformFunc: CASPathTransformFunc,
 		Transport:         tcpTransport,
 		BootstrapNodes:    nodes,
@@ -37,7 +39,10 @@ func main() {
 	go func() {
 		log.Fatal(s1.Start())
 	}()
-
-	s2.Start()
-
+	time.Sleep(2 * time.Second)
+	go s2.Start()
+	time.Sleep(2 * time.Second)
+	content := bytes.NewReader([]byte("hello here"))
+	s2.StoreData("hey", content)
+	select {}
 }
