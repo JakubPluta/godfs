@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"io"
@@ -98,7 +99,8 @@ type MessageGetFile struct {
 func (f *FileServer) Get(key string) (io.Reader, error) {
 	if f.store.Has(key) {
 		fmt.Printf("[%s] serving file (%s) from disk\n", f.Transport.Addr(), key)
-		return f.store.Read(key)
+		_, r, err := f.store.Read(key)
+		return r, err
 	}
 	fmt.Printf("[%s] dont have file (%s) locally, fetching from network...\n", f.Transport.Addr(), key)
 	msg := Message{
@@ -109,7 +111,11 @@ func (f *FileServer) Get(key string) (io.Reader, error) {
 	}
 	time.Sleep(time.Millisecond * 5)
 	for _, peer := range f.peers {
-		n, err := f.store.Write(key, io.LimitReader(peer, 22))
+		// First read the file size so we can limit the amount of bytes
+		// that we read from connection, so it will not hanging
+		var fileSize int64
+		binary.Read(peer, binary.LittleEndian, &fileSize)
+		n, err := f.store.Write(key, io.LimitReader(peer, fileSize))
 		if err != nil {
 			return nil, err
 		}
@@ -118,8 +124,8 @@ func (f *FileServer) Get(key string) (io.Reader, error) {
 
 		peer.CloseStream()
 	}
-	return f.store.Read(key)
-
+	_, r, err := f.store.Read(key)
+	return r, err
 }
 
 func (f *FileServer) Store(key string, r io.Reader) error {
@@ -195,16 +201,28 @@ func (fs *FileServer) handleMessageGetFile(from string, msg MessageGetFile) erro
 	}
 	fmt.Printf("[%s] serving file (%s) over the network\n", fs.Transport.Addr(), msg.Key)
 
-	r, err := fs.store.Read(msg.Key)
+	fileSize, r, err := fs.store.Read(msg.Key)
 	if err != nil {
 		return err
 	}
+
+	if rc, ok := r.(io.ReadCloser); ok {
+		fmt.Println("closing readercloser")
+		defer rc.Close()
+	}
+
 	peer, ok := fs.peers[from]
 	if !ok {
 		return fmt.Errorf("peer not found (%s) in peer list", from)
 	}
-
+	// first send `IncomingStream` to peer
+	// and then send the file size as an int64
 	peer.Send([]byte{p2p.IncomingStream})
+
+	// TODO: Fix it
+
+	binary.Write(peer, binary.LittleEndian, fileSize)
+
 	n, err := io.Copy(peer, r)
 	if err != nil {
 		return err

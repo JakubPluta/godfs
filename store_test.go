@@ -22,7 +22,7 @@ func TestStore(t *testing.T) {
 			t.Fatal("expected true")
 		}
 
-		r, err := s.Read(key)
+		_, r, err := s.Read(key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,7 +57,7 @@ func TestStoreDelete(t *testing.T) {
 	if err := s.Delete(key); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Read(key); err == nil {
+	if _, _, err := s.Read(key); err == nil {
 		t.Fatal("expected error")
 	}
 }
