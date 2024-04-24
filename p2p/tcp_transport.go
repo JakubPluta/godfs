@@ -3,7 +3,6 @@ package p2p
 import (
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"sync"
@@ -18,15 +17,19 @@ type TCPPeer struct {
 	// if we accept a connection, we are inbound. So outbound == false
 	outboud bool
 
-	Wg *sync.WaitGroup
+	wg *sync.WaitGroup
 }
 
 func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
 	return &TCPPeer{
 		Conn:    conn,
 		outboud: outbound,
-		Wg:      &sync.WaitGroup{},
+		wg:      &sync.WaitGroup{},
 	}
+}
+
+func (t *TCPPeer) CloseStream() {
+	t.wg.Done()
 }
 
 // Send implements the Peer interface.
@@ -51,7 +54,7 @@ type TCPTransport struct {
 func NewTCPTransport(opts TCPTransportOpts) *TCPTransport {
 	return &TCPTransport{
 		TCPTransportOpts: opts,
-		rpcchan:          make(chan RPC),
+		rpcchan:          make(chan RPC, 1024),
 	}
 }
 
@@ -59,6 +62,12 @@ func NewTCPTransport(opts TCPTransportOpts) *TCPTransport {
 // for reading the incoming messages received from other peer in the network.
 func (t *TCPTransport) Consume() <-chan RPC {
 	return t.rpcchan
+}
+
+// Addr implements the Transport interface.
+// It returns the listen address of the TCPTransport.
+func (t *TCPTransport) Addr() string {
+	return t.ListenAddr
 }
 
 // Close implements the Transport interface.
@@ -128,26 +137,23 @@ func (t *TCPTransport) handleConn(conn net.Conn, outbound bool) {
 		}
 	}
 
-	rpc := RPC{}
 	for {
+		rpc := RPC{}
 		err = t.Decoder.Decode(conn, &rpc)
-		if err == io.EOF {
-			fmt.Printf("TCPTransport: Connection closed: %v\n", err)
+		if err != nil {
 			return
 		}
-
-		if err != nil {
-			fmt.Printf("TCPTransport: Error during decoding: %v\n", err)
-			continue
-
-		}
 		rpc.From = conn.RemoteAddr().String()
-		peer.Wg.Add(1)
-		fmt.Println("Waiting till stream is done")
+		if rpc.Stream {
+			peer.wg.Add(1)
+			fmt.Printf("[%s] incoming stream, waiting till stream is done\n", rpc.From)
+			peer.wg.Wait()
+			fmt.Printf("[%s] stream closed, resume normal read\n", rpc.From)
+			continue
+		}
+
 		t.rpcchan <- rpc
-		peer.Wg.Wait()
-		fmt.Println("Stream is done, continuing normal read loop...")
-		//fmt.Printf("TCPTransport: Received message: %v\n", rpc)
+
 	}
 
 }

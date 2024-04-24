@@ -15,7 +15,7 @@ func TestStore(t *testing.T) {
 		key := fmt.Sprintf("foobar_%d", i)
 		data := []byte("some jpg data here")
 
-		if err := s.writeStream(key, bytes.NewReader(data)); err != nil {
+		if _, err := s.writeStream(key, bytes.NewReader(data)); err != nil {
 			t.Fatal(err)
 		}
 		if ok := s.Has(key); !ok {
@@ -51,7 +51,7 @@ func TestStoreDelete(t *testing.T) {
 	}
 	s := NewStore(opts)
 	key := "mybestpicture"
-	if err := s.writeStream(key, bytes.NewReader([]byte("some jpg data"))); err != nil {
+	if _, err := s.writeStream(key, bytes.NewReader([]byte("some jpg data"))); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Delete(key); err != nil {
