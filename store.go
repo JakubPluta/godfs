@@ -84,6 +84,21 @@ func (s *Store) Read(key string) (int64, io.Reader, error) {
 	return s.readStream(key)
 }
 
+func (s *Store) readStream(key string) (int64, io.ReadCloser, error) {
+	pathKey := s.PathTransformFunc(key)
+	fullPathWithRoot := fmt.Sprintf("%s/%s", s.Root, pathKey.FullPath())
+
+	file, err := os.Open(fullPathWithRoot)
+	if err != nil {
+		return 0, nil, err
+	}
+	fi, err := file.Stat()
+	if err != nil {
+		return 0, nil, err
+	}
+	return fi.Size(), file, nil
+}
+
 func (s *Store) Has(key string) bool {
 	pathKey := s.PathTransformFunc(key)
 	fullPathWithRoot := fmt.Sprintf("%s/%s", s.Root, pathKey.FullPath())
@@ -109,39 +124,35 @@ func (s *Store) Write(key string, r io.Reader) (int64, error) {
 	return s.writeStream(key, r)
 }
 
-func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
+func (s *Store) WriteDecrypt(encKey []byte, key string, r io.Reader) (int64, error) {
+	f, err := s.openFileForWrite(key)
+	if err != nil {
+		return 0, err
+	}
+	n, err := copyDecrypt(encKey, r, f)
+	if err != nil {
+		return 0, err
+	}
+	return int64(n), nil
+}
+
+func (s *Store) openFileForWrite(key string) (*os.File, error) {
 	pathKey := s.PathTransformFunc(key)
 	pathNameWithRoot := fmt.Sprintf("%s/%s", s.Root, pathKey.PathName)
 	if err := os.MkdirAll(pathNameWithRoot, os.ModePerm); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	fullPathWithRoot := fmt.Sprintf("%s/%s", s.Root, pathKey.FullPath())
 
-	f, err := os.Create(fullPathWithRoot)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	n, err := io.Copy(f, r)
-	if err != nil {
-		return 0, err
-	}
-	return n, nil
-
+	return os.Create(fullPathWithRoot)
 }
 
-func (s *Store) readStream(key string) (int64, io.ReadCloser, error) {
-	pathKey := s.PathTransformFunc(key)
-	fullPathWithRoot := fmt.Sprintf("%s/%s", s.Root, pathKey.FullPath())
+func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
+	f, err := s.openFileForWrite(key)
+	if err != nil {
+		return 0, err
+	}
+	return io.Copy(f, r)
 
-	file, err := os.Open(fullPathWithRoot)
-	if err != nil {
-		return 0, nil, err
-	}
-	fi, err := file.Stat()
-	if err != nil {
-		return 0, nil, err
-	}
-	return fi.Size(), file, nil
 }

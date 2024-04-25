@@ -14,6 +14,7 @@ import (
 )
 
 type FileServerOpts struct {
+	EncKey            []byte
 	ListenAddr        string
 	StorageRoot       string
 	PathTransformFunc PathTransformFunc
@@ -115,7 +116,9 @@ func (f *FileServer) Get(key string) (io.Reader, error) {
 		// that we read from connection, so it will not hanging
 		var fileSize int64
 		binary.Read(peer, binary.LittleEndian, &fileSize)
-		n, err := f.store.Write(key, io.LimitReader(peer, fileSize))
+
+		n, err := f.store.WriteDecrypt(f.EncKey, key, io.LimitReader(peer, fileSize))
+
 		if err != nil {
 			return nil, err
 		}
@@ -141,21 +144,25 @@ func (f *FileServer) Store(key string, r io.Reader) error {
 	}
 
 	msg := Message{
-		Payload: MessageStoreFile{Key: key, Size: size},
+		Payload: MessageStoreFile{Key: key, Size: size + 16}, // 16 byters to iv encryption
 	}
 	if err := f.broadcast(&msg); err != nil {
 		return err
 	}
 	time.Sleep(time.Millisecond * 5)
+	peers := []io.Writer{}
+
 	for _, peer := range f.peers {
-		peer.Send([]byte{p2p.IncomingStream})
-		n, err := io.Copy(peer, fileBuffer)
-		if err != nil {
-			log.Println("failed to send key: ", err)
-			return err
-		}
-		fmt.Println("received and written", n, "bytes")
+		peers = append(peers, peer)
 	}
+	mw := io.MultiWriter(peers...)
+	mw.Write([]byte{p2p.IncomingStream})
+	n, err := copyEncrypt(f.EncKey, fileBuffer, mw)
+	if err != nil {
+		log.Println("failed to send key: ", err)
+		return err
+	}
+	fmt.Printf("[%s] received and written (%d) bytes to the disk\n", f.Transport.Addr(), n)
 	return nil
 }
 

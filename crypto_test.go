@@ -20,10 +20,16 @@ func TestCopyEncryptDecrypt(t *testing.T) {
 	fmt.Println(dst.String())
 
 	out := new(bytes.Buffer)
-	if _, err := copyDecrypt(keyBuf, dst, out); err != nil {
+	nw, err := copyDecrypt(keyBuf, dst, out)
+	if err != nil {
 		t.Fatal(err)
 	}
 	fmt.Println(out.String())
+
+	if nw != len(txt)+16 {
+		t.Errorf("expected %d, got %d", len(txt)+16, nw)
+
+	}
 
 	if out.String() != txt {
 		t.Errorf("expected %s, got %s", txt, out.String())
