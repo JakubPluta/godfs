@@ -65,15 +65,6 @@ type MessageStoreFile struct {
 	Size int64
 }
 
-func (f *FileServer) stream(msg *Message) error {
-	peers := []io.Writer{}
-	for _, peer := range f.peers {
-		peers = append(peers, peer)
-	}
-	mw := io.MultiWriter(peers...)
-	return gob.NewEncoder(mw).Encode(msg)
-}
-
 // Here we send just normal message, no streaming
 func (f *FileServer) broadcast(msg *Message) error {
 	buf := new(bytes.Buffer)
@@ -260,7 +251,7 @@ func (fs *FileServer) bootstrapNetwork() error {
 		if len(addr) == 0 {
 			continue
 		}
-		log.Println("attempting to connect with address: ", addr)
+		fmt.Printf("[%s] attempting to connect with remote node: %s\n", fs.Transport.Addr(), addr)
 		go func(addr string) {
 			if err := fs.Transport.Dial(addr); err != nil {
 				log.Println("dial error: ", err)
