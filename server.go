@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/gob"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +16,7 @@ import (
 )
 
 type FileServerOpts struct {
+	ID                string
 	EncKey            []byte
 	ListenAddr        string
 	StorageRoot       string
@@ -27,14 +30,24 @@ type FileServer struct {
 
 	peerLock sync.Mutex
 	peers    map[string]p2p.Peer
+
 	store    *Store
 	quitchan chan struct{}
+}
+
+func generateID() string {
+	buf := make([]byte, 32)
+	io.ReadFull(rand.Reader, buf)
+	return hex.EncodeToString(buf)
 }
 
 func NewFileServer(opts FileServerOpts) *FileServer {
 	storeOpts := StoreOpts{
 		Root:              opts.StorageRoot,
 		PathTransformFunc: opts.PathTransformFunc,
+	}
+	if len(opts.ID) == 0 {
+		opts.ID = generateID()
 	}
 	return &FileServer{
 		store:          NewStore(storeOpts),
@@ -61,6 +74,7 @@ type Message struct {
 }
 
 type MessageStoreFile struct {
+	ID   string
 	Key  string
 	Size int64
 }
@@ -85,18 +99,19 @@ func (f *FileServer) broadcast(msg *Message) error {
 }
 
 type MessageGetFile struct {
+	ID  string
 	Key string
 }
 
 func (f *FileServer) Get(key string) (io.Reader, error) {
-	if f.store.Has(key) {
+	if f.store.Has(f.ID, key) {
 		fmt.Printf("[%s] serving file (%s) from disk\n", f.Transport.Addr(), key)
-		_, r, err := f.store.Read(key)
+		_, r, err := f.store.Read(f.ID, key)
 		return r, err
 	}
 	fmt.Printf("[%s] dont have file (%s) locally, fetching from network...\n", f.Transport.Addr(), key)
 	msg := Message{
-		Payload: MessageGetFile{Key: key},
+		Payload: MessageGetFile{Key: key, ID: f.ID},
 	}
 	if err := f.broadcast(&msg); err != nil {
 		return nil, err
@@ -108,7 +123,7 @@ func (f *FileServer) Get(key string) (io.Reader, error) {
 		var fileSize int64
 		binary.Read(peer, binary.LittleEndian, &fileSize)
 
-		n, err := f.store.WriteDecrypt(f.EncKey, key, io.LimitReader(peer, fileSize))
+		n, err := f.store.WriteDecrypt(f.EncKey, key, f.ID, io.LimitReader(peer, fileSize))
 
 		if err != nil {
 			return nil, err
@@ -118,7 +133,7 @@ func (f *FileServer) Get(key string) (io.Reader, error) {
 
 		peer.CloseStream()
 	}
-	_, r, err := f.store.Read(key)
+	_, r, err := f.store.Read(f.ID, key)
 	return r, err
 }
 
@@ -129,13 +144,13 @@ func (f *FileServer) Store(key string, r io.Reader) error {
 		tee        = io.TeeReader(r, fileBuffer)
 	)
 
-	size, err := f.store.Write(key, tee)
+	size, err := f.store.Write(f.ID, key, tee)
 	if err != nil {
 		return err
 	}
 
 	msg := Message{
-		Payload: MessageStoreFile{Key: key, Size: size + 16}, // 16 byters to iv encryption
+		Payload: MessageStoreFile{ID: f.ID, Key: key, Size: size + 16}, // 16 byters to iv encryption
 	}
 	if err := f.broadcast(&msg); err != nil {
 		return err
@@ -194,18 +209,18 @@ func (fs *FileServer) handleMessage(from string, msg *Message) error {
 }
 
 func (fs *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error {
-	if !fs.store.Has(msg.Key) {
+	if !fs.store.Has(msg.ID, msg.Key) {
 		return fmt.Errorf("[%s] need to server file (%s) but it was not found locally", fs.Transport.Addr(), msg.Key)
 	}
 	fmt.Printf("[%s] serving file (%s) over the network\n", fs.Transport.Addr(), msg.Key)
 
-	fileSize, r, err := fs.store.Read(msg.Key)
+	fileSize, r, err := fs.store.Read(msg.ID, msg.Key)
 	if err != nil {
 		return err
 	}
 
 	if rc, ok := r.(io.ReadCloser); ok {
-		fmt.Println("closing readercloser")
+		fmt.Println("closing readCloser")
 		defer rc.Close()
 	}
 
@@ -216,9 +231,6 @@ func (fs *FileServer) handleMessageGetFile(from string, msg MessageGetFile) erro
 	// first send `IncomingStream` to peer
 	// and then send the file size as an int64
 	peer.Send([]byte{p2p.IncomingStream})
-
-	// TODO: Fix it
-
 	binary.Write(peer, binary.LittleEndian, fileSize)
 
 	n, err := io.Copy(peer, r)
@@ -231,13 +243,12 @@ func (fs *FileServer) handleMessageGetFile(from string, msg MessageGetFile) erro
 }
 
 func (fs *FileServer) handleMessageStoreFile(from string, msg MessageStoreFile) error {
-	fmt.Printf("saved file: %v+\n", msg)
 	peer, ok := fs.peers[from]
 	if !ok {
 		return fmt.Errorf("peer not found (%s) in peer list", from)
 	}
 
-	n, err := fs.store.Write(msg.Key, io.LimitReader(peer, msg.Size))
+	n, err := fs.store.Write(msg.ID, msg.Key, io.LimitReader(peer, msg.Size))
 	if err != nil {
 		return err
 	}
@@ -262,6 +273,7 @@ func (fs *FileServer) bootstrapNetwork() error {
 }
 
 func (fs *FileServer) Start() error {
+	fmt.Printf("[%s] starting fileserver\n", fs.Transport.Addr())
 	if err := fs.Transport.ListenAndAccept(); err != nil {
 		return err
 	}
